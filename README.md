@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-green)](https://fastapi.tiangolo.com)
 [![Neo4j](https://img.shields.io/badge/Neo4j-5-blue)](https://neo4j.com)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-orange)](https://github.com/langchain-ai/langgraph)
+[![LangGraph](https://img.shields.io/badge/LangGraph-1.0%2B-orange)](https://github.com/langchain-ai/langgraph)
 
 Neo4j 그래프 데이터베이스와 Azure OpenAI를 활용한 **도메인 독립적 Graph RAG 백엔드 템플릿**입니다.
 

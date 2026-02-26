@@ -21,12 +21,9 @@ async def create_checkpointer(db_path: str = ":memory:") -> BaseCheckpointSaver:
         return MemorySaver()
 
     try:
-        import aiosqlite
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-        conn = await aiosqlite.connect(db_path)
-        saver = AsyncSqliteSaver(conn)
-        await saver.setup()
+        saver = AsyncSqliteSaver.from_conn_string(db_path)
         logger.info(f"AsyncSqliteSaver ready (path={db_path})")
         return saver
     except ImportError:

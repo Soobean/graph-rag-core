@@ -22,7 +22,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from src.auth.models import UserContext
@@ -272,7 +272,7 @@ class GraphRAGPipeline:
         workflow.add_node("response_generator", self._response_generator)
 
         # 시작점 설정
-        workflow.set_entry_point("intent_entity_extractor")
+        workflow.add_edge(START, "intent_entity_extractor")
 
         # 1. IntentEntityExtractor → EntityResolver 또는 ResponseGenerator
         def route_after_intent(
