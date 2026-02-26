@@ -1,15 +1,4 @@
-"""
-Graph RAG Pipeline
-
-LangGraph를 사용한 RAG 파이프라인 정의
-- Checkpointer로 대화 기록 관리
-- 스키마는 초기화 시 주입 (런타임 조회 제거)
-
-핵심 6노드 파이프라인:
-  IntentEntityExtractor → EntityResolver → CypherGenerator
-  → GraphExecutor → ResponseGenerator
-  (unresolved → ClarificationHandler)
-"""
+"""Graph RAG Pipeline — LangGraph 기반 6노드 파이프라인"""
 
 from __future__ import annotations
 
@@ -29,7 +18,7 @@ from src.auth.models import UserContext
 from src.config import Settings
 from src.domain.types import GraphSchema, PipelineMetadata, PipelineResult
 from src.graph.constants import META_NODE_PREFIXES
-from src.graph.metadata_builder import ResponseMetadataBuilder
+from src.graph.metadata_builder import build_metadata
 from src.graph.nodes import (
     ClarificationHandlerNode,
     CypherGeneratorNode,
@@ -48,53 +37,25 @@ from src.repositories.query_cache_repository import QueryCacheRepository
 logger = logging.getLogger(__name__)
 
 
-def _build_step_description(
-    node_name: str,
-    state: dict[str, Any],
-    node_output: dict[str, Any],
-) -> str:
-    """각 파이프라인 노드의 실시간 설명을 생성한다."""
+_STEP_DESCRIPTIONS: dict[str, str] = {
+    "entity_resolver": "그래프에서 엔티티 매칭",
+    "cypher_generator": "Cypher 쿼리 생성",
+    "response_generator": "응답 생성",
+    "clarification_handler": "명확화 요청",
+}
+
+
+def _build_step_description(node_name: str, state: dict[str, Any], node_output: dict[str, Any]) -> str:
     if node_name == "intent_entity_extractor":
-        intent = state.get("intent", "unknown")
-        confidence = state.get("intent_confidence", 0)
-        return f"의도: {intent} ({confidence * 100:.0f}%)"
-
-    if node_name == "entity_resolver":
-        return "그래프에서 엔티티 매칭"
-
-    if node_name == "cypher_generator":
-        return "Cypher 쿼리 생성"
-
+        return f"의도: {state.get('intent', 'unknown')} ({state.get('intent_confidence', 0) * 100:.0f}%)"
     if node_name == "graph_executor":
         results = state.get("graph_results", [])
-        count = len(results) if isinstance(results, list) else 0
-        return f"쿼리 실행: {count}건 조회"
-
-    if node_name == "response_generator":
-        return "응답 생성"
-
-    if node_name == "clarification_handler":
-        return "명확화 요청"
-
-    return node_name
+        return f"쿼리 실행: {len(results) if isinstance(results, list) else 0}건 조회"
+    return _STEP_DESCRIPTIONS.get(node_name, node_name)
 
 
 class GraphRAGPipeline:
-    """
-    Graph RAG 파이프라인
-
-    질문 → 의도분류+엔티티추출 → 엔티티해석 → Cypher생성 → 쿼리실행 → 응답생성
-
-    사용 예시:
-        schema = await neo4j_repo.get_schema()
-        pipeline = GraphRAGPipeline(
-            settings=settings,
-            neo4j_repository=neo4j_repo,
-            llm_repository=llm_repo,
-            graph_schema=schema,
-        )
-        result = await pipeline.run("Find people who know Python", session_id="user-123")
-    """
+    """질문 → 의도분류 → 엔티티해석 → Cypher생성 → 쿼리실행 → 응답생성"""
 
     def __init__(
         self,
@@ -110,17 +71,14 @@ class GraphRAGPipeline:
         self._llm = llm_repository
         self._graph_schema = graph_schema
 
-        # 스키마에서 entity_types와 schema_summary 자동 추출
         self._entity_types = self._extract_entity_types(graph_schema)
         self._schema_summary = self._build_schema_summary(graph_schema)
 
-        # Query Cache Repository (Vector Search 활성화 시)
         self._cache_repository: QueryCacheRepository | None = None
         if settings.vector_search_enabled and neo4j_client:
             self._cache_repository = QueryCacheRepository(neo4j_client, settings)
             logger.info("Query cache repository initialized")
 
-        # 노드 초기화
         self._intent_entity_extractor = IntentEntityExtractorNode(
             llm_repository,
             entity_types=self._entity_types,
@@ -140,13 +98,7 @@ class GraphRAGPipeline:
         )
         self._response_generator = ResponseGeneratorNode(llm_repository)
 
-        # 메타데이터 빌더
-        self._metadata_builder = ResponseMetadataBuilder()
-
-        # Checkpointer (외부 주입 또는 기본 MemorySaver)
         self._checkpointer = checkpointer or MemorySaver()
-
-        # 그래프 빌드
         self._graph = self._build_graph()
 
         if not self._entity_types:
@@ -165,18 +117,10 @@ class GraphRAGPipeline:
 
     @staticmethod
     def _extract_entity_types(schema: GraphSchema | None) -> list[str]:
-        """
-        스키마의 node_labels에서 메타 노드를 필터링하여 entity_types를 추출한다.
-
-        메타 노드 기준: '_' 또는 '__' 접두사 (e.g., __Chunk__, _Schema)
-        node_labels가 비어있으면 nodes 상세 정보에서 label을 추출한다 (fallback).
-        """
         if not schema:
             return []
 
         node_labels = schema.get("node_labels", [])
-
-        # node_labels가 비어있으면 nodes 상세에서 label 추출 (fallback)
         if not node_labels:
             nodes = schema.get("nodes", [])
             node_labels = [n.get("label", "") for n in nodes if n.get("label")]
@@ -189,12 +133,6 @@ class GraphRAGPipeline:
 
     @staticmethod
     def _build_schema_summary(schema: GraphSchema | None) -> str:
-        """
-        스키마를 사람이 읽을 수 있는 요약 텍스트로 변환한다.
-
-        예: "Node types: Person (name, age, email), Company (name, industry)
-             Relationships: WORKS_AT (Person→Company), KNOWS (Person→Person)"
-        """
         if not schema:
             return ""
 
@@ -254,16 +192,7 @@ class GraphRAGPipeline:
         return "\n".join(lines)
 
     def _build_graph(self) -> CompiledStateGraph:
-        """
-        LangGraph 워크플로우 구성
-
-        파이프라인 흐름:
-            intent_entity_extractor → entity_resolver
-            → cypher_generator → graph_executor → response_generator
-        """
         workflow = StateGraph(GraphRAGState)
-
-        # 노드 추가
         workflow.add_node("intent_entity_extractor", self._intent_entity_extractor)
         workflow.add_node("entity_resolver", self._entity_resolver)
         workflow.add_node("clarification_handler", self._clarification_handler)
@@ -271,10 +200,7 @@ class GraphRAGPipeline:
         workflow.add_node("graph_executor", self._graph_executor)
         workflow.add_node("response_generator", self._response_generator)
 
-        # 시작점 설정
         workflow.add_edge(START, "intent_entity_extractor")
-
-        # 1. IntentEntityExtractor → EntityResolver 또는 ResponseGenerator
         def route_after_intent(
             state: GraphRAGState,
         ) -> Literal["entity_resolver", "response_generator"]:
@@ -290,7 +216,6 @@ class GraphRAGPipeline:
             ["entity_resolver", "response_generator"],
         )
 
-        # 2. EntityResolver → CypherGenerator 또는 ClarificationHandler
         def route_after_resolver(
             state: GraphRAGState,
         ) -> Literal["cypher_generator", "clarification_handler", "response_generator"]:
@@ -339,7 +264,6 @@ class GraphRAGPipeline:
             },
         )
 
-        # 3. CypherGenerator → GraphExecutor 또는 에러 처리
         def route_after_cypher(
             state: GraphRAGState,
         ) -> Literal["graph_executor", "response_generator"]:
@@ -357,13 +281,8 @@ class GraphRAGPipeline:
             },
         )
 
-        # 4. GraphExecutor → ResponseGenerator
         workflow.add_edge("graph_executor", "response_generator")
-
-        # 5. ClarificationHandler → END
         workflow.add_edge("clarification_handler", END)
-
-        # 6. ResponseGenerator → END
         workflow.add_edge("response_generator", END)
 
         return workflow.compile(checkpointer=self._checkpointer)
@@ -547,7 +466,7 @@ class GraphRAGPipeline:
                         if response:
                             yield {
                                 "type": "metadata",
-                                "data": self._build_metadata(final_state),
+                                "data": build_metadata(final_state),
                             }
                             yield {"type": "chunk", "text": response}
                             yield {
@@ -559,7 +478,7 @@ class GraphRAGPipeline:
 
             existing_response = final_state.get("response", "")
             if existing_response:
-                yield {"type": "metadata", "data": self._build_metadata(final_state)}
+                yield {"type": "metadata", "data": build_metadata(final_state)}
                 yield {"type": "chunk", "text": existing_response}
                 yield {
                     "type": "done",
@@ -568,7 +487,7 @@ class GraphRAGPipeline:
                 }
                 return
 
-            metadata = self._build_metadata(final_state)
+            metadata = build_metadata(final_state)
             yield {"type": "metadata", "data": metadata}
 
             step_count += 1
@@ -625,6 +544,3 @@ class GraphRAGPipeline:
                 "message": str(e),
             }
 
-    def _build_metadata(self, state: dict[str, Any]) -> dict[str, Any]:
-        """스트리밍용 메타데이터 구성"""
-        return self._metadata_builder.build_metadata(state)
