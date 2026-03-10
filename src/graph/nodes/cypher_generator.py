@@ -1,16 +1,5 @@
-"""
-Cypher Generator Node
-
-사용자 질문과 엔티티 정보를 바탕으로 Cypher 쿼리를 생성합니다.
-캐시 히트 시에는 생성을 스킵합니다.
-
-Latency Optimization:
-- 단순 쿼리(single-hop, 기본 의도, 적은 엔티티)에는 LIGHT 모델 사용
-- 복잡한 쿼리(multi-hop, 복잡한 의도)에는 HEAVY 모델 사용
-"""
-
 import re
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from src.config import Settings
@@ -21,7 +10,7 @@ from src.repositories.llm_repository import LLMRepository
 from src.repositories.neo4j_repository import Neo4jRepository
 
 
-class QueryComplexity(str, Enum):
+class QueryComplexity(StrEnum):
     """쿼리 복잡도 구분"""
 
     SIMPLE = "simple"  # LIGHT 모델 사용
@@ -226,7 +215,10 @@ class CypherGeneratorNode(BaseNode[CypherGeneratorUpdate]):
 
         return_parts = [f"{main_var}.name AS name"] + aliases
         new_return = "RETURN " + ", ".join(return_parts)
-        result_lines = lines[:re_match_idx] + [new_return, f"ORDER BY {aliases[0]} DESC"]
+        result_lines = lines[:re_match_idx] + [
+            new_return,
+            f"ORDER BY {aliases[0]} DESC",
+        ]
         fixed = "\n".join(result_lines)
 
         self._logger.info("Fixed aggregation + TYPE A return → TYPE B")

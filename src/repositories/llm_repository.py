@@ -3,7 +3,7 @@
 import json
 import logging
 from collections.abc import AsyncIterator
-from enum import Enum
+from enum import StrEnum
 from typing import Any, cast
 
 from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI, RateLimitError
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 FALLBACK_EXCEPTIONS = (LLMRateLimitError, LLMConnectionError, LLMResponseError)
 
 
-class ModelTier(str, Enum):
+class ModelTier(StrEnum):
     LIGHT = "light"
     HEAVY = "heavy"
 
